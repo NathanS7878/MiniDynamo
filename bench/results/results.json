@@ -1,0 +1,22 @@
+[
+  {
+    "policy": "round_robin",
+    "requests": 96,
+    "ttft_p50_ms": 67.61659996118397,
+    "ttft_p90_ms": 131.98270002612844,
+    "ttft_mean_ms": 76.8515218757481,
+    "cache_hit_rate": 0.0,
+    "wall_sec": 0.42418470000848174,
+    "throughput_rps": 226.316507875179
+  },
+  {
+    "policy": "kv_aware",
+    "requests": 96,
+    "ttft_p50_ms": 52.132499986328185,
+    "ttft_p90_ms": 107.44789999444038,
+    "ttft_mean_ms": 59.71577916595076,
+    "cache_hit_rate": 0.9112,
+    "wall_sec": 0.34479230002034456,
+    "throughput_rps": 278.4284915711154
+  }
+]

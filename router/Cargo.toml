@@ -1,0 +1,23 @@
+[package]
+name = "minidynamo-router"
+version = "0.1.0"
+edition = "2021"
+description = "MiniDynamo: KV-cache-aware inference router (Dynamo-style)"
+
+[[bin]]
+name = "router"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-stream = "0.3"
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+opt-level = 3

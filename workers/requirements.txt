@@ -1,0 +1,7 @@
+# Kept unpinned so pip picks versions with prebuilt wheels for your Python.
+# (Pinning older releases forces a source build of pydantic-core on Python 3.14.)
+fastapi>=0.115
+uvicorn[standard]>=0.34
+pydantic>=2.11
+# Phase 3 (real model backend) adds:
+# llama-cpp-python

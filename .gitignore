@@ -1,0 +1,29 @@
+# Rust
+/router/target/
+**/*.rs.bk
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Models / data
+models/
+*.gguf
+*.bin
+
+# Bench output — keep the committed chart + summary, drop transient runs
+bench/results/*
+!bench/results/ttft.png
+!bench/results/summary.md
+!bench/results/results.json
+*.csv
+!bench/traces/*.csv
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

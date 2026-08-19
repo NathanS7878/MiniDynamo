@@ -1,0 +1,438 @@
+<title>Dynamo Study Deck</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  /* ---- Light palette (bare :root = the un-stamped default) ---- */
+  :root {
+    --bg:        #eef1ee;   /* faint green-biased paper */
+    --surface:   #ffffff;
+    --surface-2: #f5f8f4;
+    --ink:       #141a17;
+    --muted:     #566661;
+    --faint:     #8497901f;
+    --border:    #d5ded7;
+    --accent:    #2f7d00;   /* NVIDIA green, darkened for light-mode contrast */
+    --accent-ink:#ffffff;
+    --review:    #b45c00;   /* amber signal */
+    --review-bg: #f6e9d6;
+    --known:     #2f7d00;
+    --known-bg:  #e2efd8;
+    --code-bg:   #f0f3ee;
+    --shadow:    0 1px 2px #0b170f14, 0 12px 30px #0b170f14;
+    --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", "SF Mono", Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  /* System-dark (no explicit choice) — redefine only tokens */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:        #0c110f;
+      --surface:   #141c19;
+      --surface-2: #101815;
+      --ink:       #e7efe9;
+      --muted:     #90a49b;
+      --faint:     #ffffff0d;
+      --border:    #26332e;
+      --accent:    #76b900;   /* NVIDIA green pops on dark */
+      --accent-ink:#0c110f;
+      --review:    #f0a500;
+      --review-bg: #2a2113;
+      --known:     #76b900;
+      --known-bg:  #17240f;
+      --code-bg:   #0c1310;
+      --shadow:    0 1px 2px #00000040, 0 16px 40px #00000059;
+    }
+  }
+  /* Explicit dark toggle wins in both directions */
+  :root[data-theme="dark"] {
+    --bg:#0c110f; --surface:#141c19; --surface-2:#101815; --ink:#e7efe9; --muted:#90a49b;
+    --faint:#ffffff0d; --border:#26332e; --accent:#76b900; --accent-ink:#0c110f;
+    --review:#f0a500; --review-bg:#2a2113; --known:#76b900; --known-bg:#17240f;
+    --code-bg:#0c1310; --shadow:0 1px 2px #00000040, 0 16px 40px #00000059;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: var(--sans); line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    display: flex; justify-content: center;
+    padding: clamp(16px, 4vw, 48px);
+  }
+  .wrap { width: 100%; max-width: 760px; }
+
+  /* ---- Masthead ---- */
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 22px; }
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
+  h1 { margin: 2px 0 0; font-size: clamp(22px, 4vw, 30px); letter-spacing: -.02em; text-wrap: balance; }
+  .sub { color: var(--muted); font-size: 13.5px; margin-top: 4px; }
+  .tools { display: flex; gap: 8px; align-items: center; }
+  .icon-btn {
+    font-family: var(--mono); font-size: 12px; color: var(--muted);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 11px; cursor: pointer; transition: color .15s, border-color .15s, background .15s;
+  }
+  .icon-btn:hover { color: var(--ink); border-color: var(--accent); }
+
+  /* ---- Progress ---- */
+  .meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+  .counts { display: flex; gap: 14px; }
+  .counts b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align: middle; }
+  .dot.k { background: var(--known); }
+  .dot.r { background: var(--review); }
+  .bar { height: 5px; background: var(--faint); border: 1px solid var(--border); border-radius: 99px; overflow: hidden; margin-bottom: 20px; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s ease; }
+
+  /* ---- Card ---- */
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    box-shadow: var(--shadow); padding: clamp(22px, 4vw, 34px);
+    min-height: 340px; display: flex; flex-direction: column;
+  }
+  .card.is-interview { border-color: var(--accent); box-shadow: var(--shadow), inset 0 0 0 1px var(--accent); }
+  .chip-row { display: flex; gap: 8px; align-items: center; margin-bottom: 18px; flex-wrap: wrap; }
+  .chip { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px; }
+  .chip.cat { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+  .chip.interview { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+  .chip.status-known { color: var(--known); background: var(--known-bg); border-color: color-mix(in srgb, var(--known) 35%, var(--border)); }
+  .chip.status-review { color: var(--review); background: var(--review-bg); border-color: color-mix(in srgb, var(--review) 35%, var(--border)); }
+
+  .q { font-size: clamp(19px, 2.6vw, 23px); font-weight: 600; letter-spacing: -.01em; text-wrap: pretty; margin: 0; }
+  .prompt-hint { color: var(--muted); font-size: 13px; margin-top: 14px; font-style: italic; }
+
+  .answer { margin-top: 20px; padding-top: 20px; border-top: 1px dashed var(--border); }
+  .answer[hidden] { display: none; }
+  .a-label { font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent); margin-bottom: 8px; }
+  .answer p { margin: 0 0 10px; font-size: 15.5px; }
+  .answer p:last-child { margin-bottom: 0; }
+  .answer code { font-family: var(--mono); font-size: .88em; background: var(--code-bg); border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; }
+  .answer pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; overflow-x: auto; margin: 12px 0; }
+  .answer pre code { background: none; border: 0; padding: 0; font-size: 13px; line-height: 1.5; }
+  .answer strong { color: var(--ink); }
+  .answer .say { border-left: 3px solid var(--accent); padding: 8px 0 8px 14px; margin: 12px 0 0; color: var(--ink); background: linear-gradient(90deg, var(--surface-2), transparent); }
+  .answer .say b { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); display: block; margin-bottom: 4px; }
+
+  .spacer { flex: 1; }
+
+  /* ---- Controls ---- */
+  .reveal-btn {
+    margin-top: 22px; width: 100%; font-family: var(--mono); font-size: 14px; font-weight: 600;
+    background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 10px;
+    padding: 13px; cursor: pointer; letter-spacing: .02em; transition: filter .15s;
+  }
+  .reveal-btn:hover { filter: brightness(1.06); }
+
+  .grade { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 22px; }
+  .grade button { font-family: var(--mono); font-size: 13.5px; font-weight: 600; padding: 12px; border-radius: 10px; cursor: pointer; border: 1px solid var(--border); background: var(--surface-2); color: var(--ink); transition: transform .1s, border-color .15s, background .15s; }
+  .grade button:hover { transform: translateY(-1px); }
+  .grade .got { border-color: color-mix(in srgb, var(--known) 45%, var(--border)); color: var(--known); }
+  .grade .rev { border-color: color-mix(in srgb, var(--review) 45%, var(--border)); color: var(--review); }
+  .grade[hidden] { display: none; }
+
+  .nav { display: flex; align-items: center; justify-content: space-between; margin-top: 18px; gap: 10px; }
+  .nav button { font-family: var(--mono); font-size: 13px; color: var(--muted); background: none; border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; cursor: pointer; transition: color .15s, border-color .15s; }
+  .nav button:hover:not(:disabled) { color: var(--ink); border-color: var(--accent); }
+  .nav button:disabled { opacity: .4; cursor: default; }
+
+  .kbd-note { text-align: center; color: var(--muted); font-size: 12px; margin-top: 18px; }
+  .kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; background: var(--surface); color: var(--ink); }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .done-banner { text-align: center; padding: 8px 0 0; color: var(--known); font-family: var(--mono); font-size: 13px; }
+  .done-banner[hidden] { display: none; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+  @media (max-width: 460px) { .grade { grid-template-columns: 1fr; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <div class="eyebrow">MiniDynamo · Study Deck</div>
+      <h1>KV-cache serving, from zero</h1>
+      <div class="sub">Recall first, then reveal. Grade yourself so the deck knows what to drill.</div>
+    </div>
+    <div class="tools">
+      <button class="icon-btn" id="filterBtn" title="Show only cards you marked for review">All cards</button>
+      <button class="icon-btn" id="shuffleBtn" title="Shuffle the deck">Shuffle</button>
+      <button class="icon-btn" id="themeBtn" title="Toggle light / dark">◐</button>
+    </div>
+  </header>
+
+  <div class="meta">
+    <span id="position">01 / 22</span>
+    <span class="counts">
+      <span><span class="dot k"></span><b id="knownCount">0</b> known</span>
+      <span><span class="dot r"></span><b id="reviewCount">0</b> review</span>
+    </span>
+  </div>
+  <div class="bar"><i id="barFill"></i></div>
+
+  <article class="card" id="card">
+    <div class="chip-row" id="chipRow"></div>
+    <p class="q" id="question"></p>
+    <p class="prompt-hint" id="hint">Try to answer out loud, then reveal.</p>
+
+    <div class="answer" id="answer" hidden>
+      <div class="a-label">Answer</div>
+      <div id="answerBody"></div>
+    </div>
+
+    <div class="spacer"></div>
+
+    <button class="reveal-btn" id="revealBtn">Reveal answer</button>
+    <div class="grade" id="grade" hidden>
+      <button class="rev" id="reviewBtn">Needs review</button>
+      <button class="got" id="gotBtn">Got it</button>
+    </div>
+
+    <div class="nav">
+      <button id="prevBtn">← Prev</button>
+      <button id="restartBtn" class="icon-btn" style="border-radius:8px">Reset progress</button>
+      <button id="nextBtn">Next →</button>
+    </div>
+    <div class="done-banner" id="doneBanner" hidden>Every card marked known. Nice — shuffle and go again.</div>
+  </article>
+
+  <p class="kbd-note">
+    <span class="kbd">Space</span> reveal &nbsp;·&nbsp; <span class="kbd">←</span> <span class="kbd">→</span> move &nbsp;·&nbsp;
+    <span class="kbd">G</span> got it &nbsp;·&nbsp; <span class="kbd">R</span> review
+  </p>
+</div>
+
+<script>
+const CARDS = [
+  { cat: "Foundations", q: "What are the two phases of running an LLM on a prompt, and what does each produce?",
+    a: `<p><strong>Prefill</strong> — the model reads the <em>entire</em> prompt in one pass, does a big burst of math, and produces the <strong>first</strong> output token (plus the KV cache).</p>
+        <p><strong>Decode</strong> — it then generates the rest of the response <strong>one token at a time</strong>, each step using everything so far, until it stops.</p>` },
+
+  { cat: "Foundations", q: "What is a \"token\"?",
+    a: `<p>The smallest chunk of text the model reads or writes — usually a word or a word-<em>piece</em>. \"distributed\" might be one token; \"Hello world\" is about two. Models think in tokens, not characters.</p>` },
+
+  { cat: "KV cache", q: "What is the KV cache, and why does it exist?",
+    a: `<p>To generate each new token, the model runs <strong>attention</strong>: the new token looks back at every previous token, each of which has a <strong>Key</strong> and <strong>Value</strong> vector. Those K/V vectors never change once computed.</p>
+        <p>So the model <strong>caches</strong> them instead of recomputing every step. That store is the <strong>KV cache</strong>. (Analogy: margin notes you glance at instead of re-reading every page.)</p>` },
+
+  { cat: "KV cache", q: "Why is prefill expensive while decode is cheaper per step?",
+    a: `<p><strong>Prefill</strong> processes <em>all</em> prompt tokens at once — cost scales with prompt length; it's <strong>compute-bound</strong> (saturates the GPU's math units).</p>
+        <p><strong>Decode</strong> handles just <em>one</em> new token per step; it's <strong>memory-bandwidth-bound</strong>. Cheaper each step, but you do it many times.</p>` },
+
+  { cat: "KV cache", q: "What is prefix caching (KV reuse), and why is it the whole point?",
+    a: `<p>If two requests <strong>start with the same tokens</strong>, the KV cache for that shared prefix is <strong>identical</strong>. So a new request can <strong>reuse</strong> it and <strong>skip prefill</strong> for that part.</p>
+        <p>Example: every chat request shares the system prompt <code>"You are a helpful assistant..."</code>. Reusing its cache means the answer starts much sooner.</p>` },
+
+  { cat: "Metrics", q: "What is TTFT, and what makes it drop?",
+    a: `<p><strong>Time To First Token</strong> — how long the user waits before the first word appears. It's dominated by prefill.</p>
+        <p>Reusing a cached prefix skips prefill, so <strong>more cache hits → lower TTFT</strong>. That's exactly what your benchmark measured.</p>` },
+
+  { cat: "Routing", q: "Round-robin vs KV-cache-aware routing — what's the difference?",
+    a: `<p><strong>Round-robin</strong>: hand requests to workers in turn (0,1,2,0…). Even load, but it <strong>ignores the cache</strong> — a shared prefix often lands on a cold worker that must redo prefill.</p>
+        <p><strong>KV-aware</strong>: track which worker cached which prefix, and send each request to the worker that can <strong>reuse the most cache</strong>.</p>` },
+
+  { cat: "Routing", q: "State the KV-aware routing rule in one sentence.",
+    a: `<p>Route to the worker holding the <strong>longest cached prefix</strong> of this request; on a tie, pick the <strong>least-loaded</strong> worker.</p>
+        <p>That single cost function is the heart of the smart router.</p>` },
+
+  { cat: "Routing", q: "How does the router turn a prompt into something it can match against caches?",
+    a: `<p>Four steps:</p>
+        <p>1. <strong>Tokenize</strong> the prompt → a list of token IDs.<br>
+           2. Split into fixed-size <strong>blocks</strong> (e.g. 16 tokens).<br>
+           3. <strong>Hash each block together with its prefix</strong> → one number per block.<br>
+           4. Compare that sequence of block-hashes to each worker's cached set; count the <strong>longest matching leading run</strong>.</p>` },
+
+  { cat: "Routing", q: "Why hash each block *with its prefix* instead of just the block's own tokens?",
+    a: `<p>Because a cached block is only reusable if the <strong>entire preceding context matches</strong> — that's how the KV cache actually works. Prefix-dependent hashing means identical prefixes produce identical hashes, and the moment the text diverges, all later hashes differ.</p>` },
+
+  { cat: "Disaggregation", q: "What is disaggregated serving, and why do it?",
+    a: `<p>Split workers into <strong>two pools</strong>: <strong>prefill workers</strong> and <strong>decode workers</strong>. A request prefills on one, then its <strong>KV cache is handed off</strong> to a decode worker for token-by-token generation.</p>
+        <p>Why: prefill is compute-bound, decode is bandwidth-bound. Sharing a GPU lets a big prefill <strong>stall</strong> everyone's decode. Separating them removes that interference and lets each pool <strong>scale independently</strong>.</p>` },
+
+  { cat: "Mental model", q: "Are the workers different GPUs? Where does the KV cache physically live?",
+    a: `<p>In a real deployment, <strong>yes</strong> — each worker owns a GPU, and the model weights and KV cache live in that <strong>GPU's memory (VRAM)</strong>.</p>
+        <p>You can't cheaply read another GPU's memory across machines, so the cache is <strong>physically stuck</strong> on the worker that built it. <strong>That isolation is the entire reason routing matters.</strong></p>` },
+
+  { cat: "Mental model", q: "You have one laptop and no NVIDIA GPU. How does MiniDynamo simulate multiple GPU workers?",
+    a: `<p>Each \"worker\" is a <strong>separate process</strong> running a small web server on its own <strong>port</strong> (9001, 9002…) on your CPU.</p>
+        <p>Instead of weights in VRAM, each keeps its KV cache as an <strong>in-memory dict</strong> and mimics model timing with <code>sleep</code> proportional to uncached work.</p>
+        <p class="say"><b>Say this in the interview</b>I modeled each GPU worker as an isolated process with its own in-memory KV cache behind an HTTP API. The routing infrastructure is real; only model execution is mocked — so a real backend drops in without changing the router.</p>` },
+
+  { cat: "Dynamo", q: "What is NVIDIA Dynamo?",
+    a: `<p>NVIDIA's <strong>open-source framework for serving LLMs at datacenter scale</strong> across fleets of GPUs. Main parts:</p>
+        <p><strong>Frontend</strong> (OpenAI-format API) · <strong>Smart Router</strong> (KV-aware) · <strong>Disaggregated serving</strong> (prefill/decode pools) · <strong>KV Cache Manager</strong> (moves/offloads cache) · <strong>Kubernetes</strong> platform.</p>
+        <p>Core runtime in <strong>Rust</strong>, with a <strong>Python SDK</strong> on top — which is why the job wants both.</p>` },
+
+  { cat: "Dynamo", q: "Why is Dynamo's core in Rust but the workers in Python?",
+    a: `<p><strong>Rust</strong> for the hot path (router/runtime): C-level speed <em>plus</em> memory safety with no garbage-collector pauses — right for low-latency systems code.</p>
+        <p><strong>Python</strong> for workers/SDK: it's the language of the ML ecosystem (vLLM, SGLang, TensorRT-LLM) and is fast to write against.</p>` },
+
+  { cat: "Rust", q: "What is Rust's ownership / borrowing, in one interview sentence?",
+    a: `<p>Every value has a single <strong>owner</strong>; you can <strong>lend</strong> it out with a reference (<code>&</code>) instead of giving it away.</p>
+        <p class="say"><b>Say this</b>Rust's ownership system tracks who's responsible for each piece of memory <em>at compile time</em>, eliminating data races and use-after-free bugs — without a garbage collector.</p>` },
+
+  { cat: "Rust", q: "In the router, what do Arc and Mutex do?",
+    a: `<p><strong>Arc</strong> (\"Atomically Reference-Counted\") lets many concurrent tasks <strong>share the same data</strong> safely; it frees the data when the last holder is gone.</p>
+        <p><strong>Mutex</strong> is a lock: to mutate shared state you must <code>.lock()</code> it first, so two tasks can't corrupt it at once.</p>
+        <pre><code>let mut cache = worker.cache.lock().unwrap();
+cache.insert(block_hash); // safe: we hold the lock</code></pre>` },
+
+  { cat: "Async", q: "What do async / await buy you in the router and workers?",
+    a: `<p>They let <strong>one</strong> server handle <strong>many</strong> requests concurrently. At an <code>.await</code> (e.g. waiting on a worker's network reply) the task <strong>pauses and yields the CPU</strong> to other requests instead of blocking a thread.</p>
+        <p>Same idea in Python (<code>async def</code> / <code>await</code>) and Rust (Tokio).</p>` },
+
+  { cat: "Your build", q: "You found a bug: cache-hit rate was 0%. What was wrong, and what was the fix?",
+    a: `<p>The router only updated its cache <strong>mirror</strong> when the response stream <em>finished</em>. The benchmark client disconnects right after the first token, so the stream was dropped early and the mirror was never updated → every request saw zero overlap.</p>
+        <p><strong>Fix:</strong> update the mirror at <strong>dispatch</strong> time — the worker caches blocks the instant it receives the request, so mirror correctness shouldn't depend on the client reading the whole response.</p>` },
+
+  { cat: "Your build", q: "What did your benchmark show, and why does the number make sense?",
+    a: `<p>On multi-turn conversations with shared prefixes: <strong>91% cache-hit rate</strong> and <strong>23% lower p50 TTFT</strong> vs round-robin, with higher throughput.</p>
+        <p>It makes sense because cache hits <strong>skip prefill</strong> — the exact cost KV-aware routing is designed to avoid.</p>` },
+
+  { cat: "★ Interview", interview: true,
+    q: "\"Tell me about a project you're proud of.\" Give your 30-second MiniDynamo pitch.",
+    a: `<p class="say"><b>Your pitch</b>LLMs generate text in two phases — a compute-heavy prefill over the whole prompt, then token-by-token decode. Prefill produces a KV cache that can be reused whenever requests share a prefix. Serving at scale means routing each request to the worker that already holds the most of its prefix in cache, instead of blind round-robin. I built MiniDynamo — a Rust router with Python workers — that implements exactly this KV-aware routing, and I benchmarked a 23% drop in time-to-first-token with 91% cache reuse. It's a scaled-down version of what NVIDIA Dynamo does.</p>
+        <p>Then pause and let them pick a thread to dig into.</p>` },
+
+  { cat: "★ Interview", interview: true,
+    q: "The job asks for \"understanding of tradeoffs.\" What's a downside of KV-aware routing, and how do you handle it?",
+    a: `<p><strong>Tradeoff:</strong> chasing cache reuse can create <strong>load imbalance</strong> — every request with a hot prefix piles onto the one worker that cached it, while others sit idle. (You actually hit this: under light load everything landed on worker-0.)</p>
+        <p><strong>Fix:</strong> make load part of the cost function — prefer cache overlap, but <strong>break ties by least load</strong>, and rotate among equal candidates so no-overlap traffic spreads evenly. Real systems also weigh queue depth and cache-block usage.</p>` },
+];
+
+// ---- State ----
+const KEY = "minidynamo-deck-v1";
+let order = CARDS.map((_, i) => i);
+let pos = 0;
+let revealed = false;
+let onlyReview = false;
+let status = {}; // index -> "known" | "review"
+
+try {
+  const saved = JSON.parse(localStorage.getItem(KEY) || "{}");
+  if (saved.status) status = saved.status;
+} catch (e) {}
+
+function save() { try { localStorage.setItem(KEY, JSON.stringify({ status })); } catch (e) {} }
+
+const $ = (id) => document.getElementById(id);
+
+function activeDeck() {
+  return onlyReview ? order.filter(i => status[i] === "review") : order;
+}
+
+function currentIndex() {
+  const deck = activeDeck();
+  if (deck.length === 0) return null;
+  if (pos >= deck.length) pos = deck.length - 1;
+  return deck[pos];
+}
+
+function render() {
+  const deck = activeDeck();
+  const idx = currentIndex();
+
+  // counts
+  const known = Object.values(status).filter(s => s === "known").length;
+  const review = Object.values(status).filter(s => s === "review").length;
+  $("knownCount").textContent = known;
+  $("reviewCount").textContent = review;
+  $("doneBanner").hidden = !(known === CARDS.length && CARDS.length > 0);
+
+  if (idx === null) {
+    $("chipRow").innerHTML = '<span class="chip">Filter</span>';
+    $("question").textContent = "No cards marked “needs review”. Switch back to All cards.";
+    $("hint").hidden = true;
+    $("answer").hidden = true;
+    $("revealBtn").hidden = true;
+    $("grade").hidden = true;
+    $("position").textContent = "00 / 00";
+    $("barFill").style.width = "0%";
+    return;
+  }
+
+  const c = CARDS[idx];
+  const pad = (n) => String(n).padStart(2, "0");
+  $("position").textContent = `${pad(pos + 1)} / ${pad(deck.length)}`;
+  $("barFill").style.width = `${((pos + 1) / deck.length) * 100}%`;
+
+  // chips
+  let chips = `<span class="chip cat">${c.cat}</span>`;
+  if (c.interview) chips += `<span class="chip interview">Interview</span>`;
+  if (status[idx] === "known") chips += `<span class="chip status-known">✓ known</span>`;
+  if (status[idx] === "review") chips += `<span class="chip status-review">↻ review</span>`;
+  $("chipRow").innerHTML = chips;
+
+  $("card").classList.toggle("is-interview", !!c.interview);
+  $("question").textContent = c.q;
+  $("answerBody").innerHTML = c.a;
+
+  $("hint").hidden = revealed;
+  $("answer").hidden = !revealed;
+  $("revealBtn").hidden = revealed;
+  $("grade").hidden = !revealed;
+
+  $("prevBtn").disabled = pos === 0;
+  $("nextBtn").disabled = pos >= deck.length - 1;
+}
+
+function reveal() { if (currentIndex() !== null) { revealed = true; render(); } }
+
+function move(delta) {
+  const deck = activeDeck();
+  const next = pos + delta;
+  if (next < 0 || next >= deck.length) return;
+  pos = next; revealed = false; render();
+}
+
+function grade(kind) {
+  const idx = currentIndex();
+  if (idx === null) return;
+  status[idx] = kind; save();
+  const deck = activeDeck();
+  // If filtering to review and we just cleared this card, stay in place (deck shrank).
+  if (onlyReview && kind === "known") { revealed = false; render(); return; }
+  if (pos < deck.length - 1) { pos++; }
+  revealed = false; render();
+}
+
+function shuffle() {
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  pos = 0; revealed = false; render();
+}
+
+// ---- Wire up ----
+$("revealBtn").onclick = reveal;
+$("gotBtn").onclick = () => grade("known");
+$("reviewBtn").onclick = () => grade("review");
+$("prevBtn").onclick = () => move(-1);
+$("nextBtn").onclick = () => move(1);
+$("shuffleBtn").onclick = shuffle;
+$("restartBtn").onclick = () => { status = {}; save(); pos = 0; revealed = false; onlyReview = false; $("filterBtn").textContent = "All cards"; render(); };
+$("filterBtn").onclick = () => {
+  onlyReview = !onlyReview; pos = 0; revealed = false;
+  $("filterBtn").textContent = onlyReview ? "Review only" : "All cards";
+  render();
+};
+
+// theme toggle (three-state aware: sets explicit data-theme)
+$("themeBtn").onclick = () => {
+  const root = document.documentElement;
+  const isDark = root.getAttribute("data-theme") === "dark" ||
+    (!root.getAttribute("data-theme") && matchMedia("(prefers-color-scheme: dark)").matches);
+  root.setAttribute("data-theme", isDark ? "light" : "dark");
+};
+
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT") return;
+  if (e.code === "Space") { e.preventDefault(); revealed ? move(1) : reveal(); }
+  else if (e.key === "ArrowRight") move(1);
+  else if (e.key === "ArrowLeft") move(-1);
+  else if (e.key.toLowerCase() === "g") grade("known");
+  else if (e.key.toLowerCase() === "r") grade("review");
+});
+
+render();
+</script>
