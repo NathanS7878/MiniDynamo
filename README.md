@@ -17,6 +17,11 @@ fastest, primarily by reusing the **KV cache** those workers already hold.
 > [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design and how each
 > piece maps to real Dynamo.
 
+**The layer below:** [nano-infer](https://github.com/NathanS7878/nano-infer) is what a worker actually does on the GPU — a from-scratch single-GPU
+inference engine with custom CUDA kernels, a paged KV cache and INT8/INT4
+quantization. MiniDynamo decides *which* worker runs a request; nano-infer is
+that worker.
+
 ## Quickstart
 
 Prereqs: Rust (`rustup`), Python 3.11+.
