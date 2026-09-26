@@ -1,85 +1,131 @@
 # MiniDynamo — Architecture
 
 MiniDynamo is a scaled-down, self-hostable reimplementation of the core ideas in
-[NVIDIA Dynamo](https://github.com/ai-dynamo/dynamo): a distributed inference
-**router** that sits in front of a pool of model **workers** and routes each
-request to the worker that can serve it fastest — primarily by reusing the
-**KV cache** that workers already hold.
+[NVIDIA Dynamo](https://github.com/ai-dynamo/dynamo): an inference **router**
+that sits in front of a pool of model **workers** and sends each request to the
+worker that can serve it fastest — primarily by reusing the **KV cache** that
+worker already holds.
 
-It runs on CPU with a tiny model (no NVIDIA GPU required); the interesting part
-is the *serving infrastructure*, which is hardware-independent.
+The workers are **simulated**: they model prefill and decode cost with timed
+sleeps instead of running a real model (see [Workers](#workers)). The part being
+studied is the *routing layer*, which doesn't depend on what the worker computes.
+The real GPU worker this router is designed to sit on top of is
+[nano-infer](https://github.com/NathanS7878/nano-infer).
 
 ## How this maps to real Dynamo
 
-| Real Dynamo | MiniDynamo |
-|---|---|
-| OpenAI-compatible frontend | Rust `axum` frontend, `POST /v1/chat/completions` |
-| Rust Runtime Core Library | Rust router: routing policies, KV radix tree, metrics |
-| Python SDK workers | Python `FastAPI` workers wrapping a model backend |
-| KV-aware smart router | Global radix tree of token-block hashes → workers; longest-prefix match with load tie-break |
-| Disaggregated serving (prefill/decode split) | Separate `prefill` and `decode` worker roles; KV state handed off between them |
-| KV cache events over NATS | Workers report cached/evicted block hashes to the router over HTTP |
-| Kubernetes serving platform | `docker-compose` + `k8s/` manifests |
+| Real Dynamo | MiniDynamo | Status |
+|---|---|---|
+| OpenAI-compatible frontend | Rust `axum` frontend, `POST /v1/chat/completions` (streaming + non-streaming) | Built |
+| KV-aware smart router | Per-worker mirror of cached block hashes; longest-contiguous-prefix match; `score = overlap − λ·load` | Built |
+| KV cache events | Workers report evicted block hashes on each request's final `done` event; the router applies them to its mirror | Built (piggybacked on the response stream, not a separate event bus) |
+| Metrics | Prometheus-format `/metrics` | Built |
+| Python workers | `FastAPI` workers with a simulated model backend | Built (simulated) |
+| Radix tree of block hashes | Not used — a flat hash set per worker is enough at this scale | Not built |
+| Disaggregated prefill/decode | — | Not built |
+| Kubernetes serving platform | — | Not built |
 
 ## Components
 
 ```
                          ┌──────────────────────────────────────┐
-      OpenAI client ───► │  Rust Frontend  (axum)                │
-  POST /v1/chat/...      │  ┌────────────────────────────────┐  │
-                         │  │  Router                         │  │
-                         │  │   • tokenize prompt             │  │
-                         │  │   • split into KV blocks        │  │
-                         │  │   • radix-tree prefix match     │  │
-                         │  │   • pick worker (cache + load)  │  │
-                         │  └────────────────────────────────┘  │
-                         │  /metrics  /health                    │
+      OpenAI client ───► │  Rust frontend + router (axum/Tokio)  │
+  POST /v1/chat/...      │   • tokenize prompt                   │
+                         │   • split into prefix-dependent       │
+                         │     block hashes                      │
+                         │   • score each worker (cache − load)  │
+                         │   • stream response back              │
+                         │  /  (dashboard)  /metrics  /health    │
                          └───────┬───────────────┬───────────────┘
                                  │               │
                        ┌─────────▼───┐     ┌─────▼─────────┐
                        │ Worker 0     │     │ Worker 1      │   ...
                        │ (Python)     │     │ (Python)      │
-                       │ model + KV   │     │ model + KV    │
+                       │ LRU KV cache │     │ LRU KV cache  │
+                       │ simulated    │     │ simulated     │
+                       │ prefill/decode│    │ prefill/decode│
                        └──────────────┘     └───────────────┘
 ```
 
 ## Routing algorithm (the core idea)
 
-1. The frontend receives a chat request and **tokenizes** the full prompt.
-2. Tokens are chunked into fixed-size **blocks** (default 16 tokens). Each block
-   is hashed together with its prefix, so identical prefixes hash identically —
-   exactly how paged-attention KV caches are keyed.
-3. The router keeps a **radix tree**: each node is a block hash, and each node
-   records the set of workers currently holding that block in their KV cache.
-4. For an incoming request, the router walks the tree along the request's block
-   hashes and finds, per worker, the **longest cached prefix** (how many blocks
-   it could skip recomputing). This is the *cache overlap score*.
-5. It picks the worker maximizing `overlap_score` and, on ties or low overlap,
-   the **least-loaded** worker (fewest active requests). This is the
-   cost function Dynamo's KV router minimizes.
-6. Workers report which blocks they cached (and evicted) so the tree stays
-   consistent with reality.
+1. The frontend receives a chat request and **tokenizes** the prompt. The
+   tokenizer is a deterministic whitespace tokenizer — the routing logic only
+   needs identical text to produce identical tokens, so a real BPE tokenizer is
+   a drop-in replacement.
+2. Tokens are chunked into fixed-size **blocks** (default 16). Each block is
+   hashed together with the hash of the block before it, so a block's hash
+   depends on its whole prefix — the same way paged KV caches are keyed.
+3. For each worker the router keeps a **mirror**: a hash set of the block hashes
+   it believes that worker holds.
+4. For an incoming request it computes, per worker, the **longest contiguous
+   run of leading blocks** in that mirror — how many blocks the worker could skip
+   recomputing. This is the *cache overlap*.
+5. It scores each worker as `overlap − λ · in_flight_requests` and picks the
+   highest (`λ` = `MD_LOAD_WEIGHT`, default 1.0). The load term stops a hot
+   prefix from piling every request onto one worker. Exact ties are broken by a
+   rotating cursor, so with no overlap the policy degrades to round-robin.
+6. After the request finishes, the router adds the request's blocks to that
+   worker's mirror and removes any blocks the worker reports it evicted.
 
-Baseline for comparison: plain **round-robin** routing, which ignores cache
-locality. The benchmark shows KV-aware routing wins on **time-to-first-token
-(TTFT)** and **cache-hit rate** for workloads with shared prefixes (multi-turn
-chats, shared system prompts, few-shot templates) — the workloads Dynamo targets.
+Baseline for comparison: plain **round-robin**, which ignores the cache when
+choosing a worker. The router still *measures* the cache reuse round-robin
+happens to land on, so the two policies' hit rates are directly comparable.
 
-## Disaggregated serving (Phase 4)
+### Why the load term exists
 
-LLM inference has two phases with different resource profiles:
-- **Prefill**: compute-bound, processes the whole prompt once, produces the
-  first token + KV cache.
-- **Decode**: memory-bandwidth-bound, generates tokens one at a time.
+An earlier version picked the highest overlap and only used load to break ties.
+Under a saturating workload it lost to round-robin by about 2×: cache-rich
+workers accumulated a queue while others sat idle. Scoring cache and load
+together fixed that — under saturation KV-aware now ties round-robin on latency
+and throughput while keeping a higher cache-hit rate.
 
-Dynamo can run these on *separate* workers so each is scheduled independently.
-MiniDynamo mirrors this: a `prefill` worker computes the KV state and first
-token, hands the KV state to a `decode` worker, which streams the rest.
+### A consistency bug the metrics caught
+
+Originally the router added a request's blocks to its mirror only when the
+response stream finished. But a worker fills its KV cache the moment generation
+starts — so if a client disconnected early, the worker held blocks the router
+didn't know about, and the mirror under-counted cache that really existed. The
+Prometheus cache metrics exposed the gap. The fix records blocks at **dispatch** time,
+independent of whether the client reads the whole response.
+
+One known gap remains: evictions still arrive on the `done` event, so an early
+disconnect can leave evicted blocks in the mirror until the next eviction report.
+That errs toward over-estimating cache, which the load term partly absorbs.
+
+## Workers
+
+Each worker is a `FastAPI` app with a real LRU cache of block hashes
+(`MD_KV_CAPACITY_BLOCKS`, default 512) and a **simulated** model:
+
+- **Prefill** sleeps `MD_PREFILL_SEC_PER_BLOCK` (default 30 ms) per *uncached*
+  block — cache hits are free, which is the effect routing is trying to exploit.
+- **Decode** sleeps `MD_DECODE_SEC_PER_TOKEN` (default 20 ms) per token and
+  streams deterministic filler text.
+
+So the benchmark measures the router's decisions under a cost model, not a real
+model's latency. Swapping the sleep for a real backend (llama.cpp on CPU, or
+nano-infer on GPU) is the next phase.
 
 ## Metrics
 
-The router exposes `/metrics` (Prometheus-style):
-- `cache_hit_blocks_total`, `cache_miss_blocks_total` → cache-hit rate
-- `ttft_seconds` histogram
-- `worker_active_requests{worker="..."}`
-- `requests_total{route_reason="cache|load"}`
+`/metrics` (Prometheus text format):
+- `minidynamo_cache_hit_blocks_total`, `minidynamo_cache_miss_blocks_total`,
+  `minidynamo_cache_hit_rate` — block-weighted
+- `minidynamo_ttft_ms_avg`
+- `minidynamo_requests_total`, `minidynamo_route_reason_total{reason="cache|load"}`
+- `minidynamo_worker_active_requests{worker="..."}`
+- `minidynamo_worker_cache_blocks{worker="..."}` — size of each mirror
+
+`/` serves a small live dashboard. Every response also carries `X-MD-Worker`,
+`X-MD-Reason`, `X-MD-Overlap` and `X-MD-Blocks` headers describing the routing
+decision.
+
+## Not built (yet)
+
+- **Real model backend** — the workers are simulated.
+- **Disaggregated prefill/decode** — Dynamo runs prefill and decode on separate
+  workers and hands KV state between them. Not implemented here.
+- **Radix tree / global index** — real Dynamo indexes blocks in a radix tree
+  across the fleet; a per-worker hash set is sufficient at 4 workers.
+- **Container / Kubernetes deployment.**

@@ -27,3 +27,6 @@ bench/results/*
 Thumbs.db
 .vscode/
 .idea/
+
+# Personal notes (kept locally, not published)
+docs/resume-content.md

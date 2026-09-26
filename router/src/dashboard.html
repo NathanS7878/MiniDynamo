@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MiniDynamo — Live Router</title>
+<style>
+  :root {
+    --bg:#0c110f; --surface:#141c19; --surface-2:#101815; --ink:#e7efe9; --muted:#90a49b;
+    --border:#26332e; --accent:#76b900; --accent-dim:#3a5c0e; --amber:#f0a500; --mono:ui-monospace,"Cascadia Code","JetBrains Mono",Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans); padding:24px; }
+  .wrap { max-width:1080px; margin:0 auto; }
+  header { display:flex; align-items:baseline; gap:12px; margin-bottom:4px; }
+  h1 { font-size:20px; margin:0; letter-spacing:-.01em; }
+  .tag { font-family:var(--mono); font-size:11px; color:var(--accent); border:1px solid var(--accent-dim); border-radius:999px; padding:2px 9px; }
+  .sub { color:var(--muted); font-size:13px; margin:0 0 20px; }
+
+  .metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:22px; }
+  .stat { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
+  .stat .k { font-family:var(--mono); font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+  .stat .v { font-size:24px; font-weight:600; margin-top:4px; font-variant-numeric:tabular-nums; }
+  .stat .v small { font-size:13px; color:var(--muted); font-weight:400; }
+
+  .workers { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:22px; }
+  .worker { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px; transition:border-color .15s, box-shadow .15s, transform .1s; }
+  .worker.active-route { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent), 0 8px 30px #76b90022; transform:translateY(-2px); }
+  .worker .name { font-family:var(--mono); font-weight:600; display:flex; align-items:center; gap:8px; }
+  .worker .name .pulse { width:9px; height:9px; border-radius:50%; background:var(--border); }
+  .worker.busy .name .pulse { background:var(--accent); box-shadow:0 0 8px var(--accent); }
+  .row { display:flex; justify-content:space-between; font-size:12.5px; color:var(--muted); margin-top:12px; }
+  .row b { color:var(--ink); font-family:var(--mono); font-variant-numeric:tabular-nums; }
+  .loadbar { height:6px; background:var(--surface-2); border-radius:99px; margin-top:6px; overflow:hidden; }
+  .loadbar > i { display:block; height:100%; width:0; background:var(--accent); transition:width .25s; }
+
+  .controls { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:18px; }
+  .presets { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+  button { font-family:var(--mono); font-size:13px; cursor:pointer; border-radius:8px; border:1px solid var(--border); background:var(--surface-2); color:var(--ink); padding:9px 13px; transition:border-color .15s, background .15s; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); color:#0c110f; border-color:var(--accent); font-weight:600; }
+  .thread-a { border-left:3px solid var(--accent); }
+  .thread-b { border-left:3px solid var(--amber); }
+  .inputrow { display:flex; gap:8px; }
+  input[type=text] { flex:1; font-family:var(--sans); font-size:14px; background:var(--surface-2); color:var(--ink); border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
+  input[type=text]:focus { outline:2px solid var(--accent); outline-offset:1px; }
+
+  .log { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; min-height:150px; }
+  .decision { font-family:var(--mono); font-size:13px; margin-bottom:10px; padding-bottom:10px; border-bottom:1px dashed var(--border); }
+  .decision .hit { color:var(--accent); } .decision .miss { color:var(--amber); }
+  .out { font-size:14px; line-height:1.6; white-space:pre-wrap; word-break:break-word; }
+  .hint { color:var(--muted); font-size:12.5px; }
+  .feed { font-family:var(--mono); font-size:11.5px; color:var(--muted); margin-top:12px; max-height:120px; overflow:auto; }
+  .feed div { padding:2px 0; }
+  @media (max-width:720px){ .metrics{grid-template-columns:repeat(2,1fr)} .workers{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>MiniDynamo</h1>
+    <span class="tag" id="policyTag">policy: …</span>
+  </header>
+  <p class="sub">Live KV-cache-aware router. Fire requests below and watch which worker each one lands on, and why.</p>
+
+  <div class="metrics">
+    <div class="stat"><div class="k">Requests</div><div class="v" id="mReq">0</div></div>
+    <div class="stat"><div class="k">Cache hit rate</div><div class="v" id="mHit">0<small>%</small></div></div>
+    <div class="stat"><div class="k">Avg TTFT</div><div class="v" id="mTtft">0<small>ms</small></div></div>
+    <div class="stat"><div class="k">Routed by</div><div class="v" id="mReason" style="font-size:15px">cache 0 · load 0</div></div>
+  </div>
+
+  <div class="workers" id="workers"></div>
+
+  <div class="controls">
+    <div class="presets">
+      <button class="thread-a" onclick="sendThread('a')">▶ Thread α — next turn</button>
+      <button class="thread-b" onclick="sendThread('b')">▶ Thread β — next turn</button>
+      <button onclick="resetThreads()">↺ reset threads</button>
+    </div>
+    <div class="inputrow">
+      <input id="freeInput" type="text" placeholder="…or type your own one-off prompt and press Enter" />
+      <button class="primary" onclick="sendFree()">Send</button>
+    </div>
+  </div>
+
+  <div class="log">
+    <div class="decision" id="decision"><span class="hint">Send a request to see the routing decision here.</span></div>
+    <div class="out" id="out"></div>
+    <div class="feed" id="feed"></div>
+  </div>
+</div>
+
+<script>
+const SYS_A = "You are a helpful assistant specialized in distributed systems and GPU inference. Answer concisely and always cite the key tradeoff before giving your recommendation to the user.";
+const SYS_B = "You are a terse Rust programming assistant. Respond only with idiomatic Rust code and never add prose, comments, or any explanation whatsoever under any circumstances.";
+const TURNS_A = ["what is prefill","now compare it to decode","what breaks under load"];
+const TURNS_B = ["reverse a string","read a file to a String","spawn an async task"];
+let idxA = 0, idxB = 0;
+let histA = [{role:"system",content:SYS_A}];
+let histB = [{role:"system",content:SYS_B}];
+
+function feed(msg){ const f=document.getElementById('feed'); const d=document.createElement('div'); d.textContent=msg; f.prepend(d); }
+
+async function fetchMetrics(){
+  try {
+    const t = await (await fetch('/metrics')).text();
+    const g = (re)=>{ const m=t.match(re); return m?m[1]:null; };
+    document.getElementById('mReq').textContent = g(/minidynamo_requests_total (\d+)/) ?? '0';
+    const hit = parseFloat(g(/minidynamo_cache_hit_rate ([\d.]+)/) ?? '0')*100;
+    document.getElementById('mHit').innerHTML = hit.toFixed(0)+'<small>%</small>';
+    document.getElementById('mTtft').innerHTML = (parseFloat(g(/minidynamo_ttft_ms_avg ([\d.]+)/) ?? '0')).toFixed(0)+'<small>ms</small>';
+    const rc = g(/route_reason_total\{reason="cache"\} (\d+)/) ?? '0';
+    const rl = g(/route_reason_total\{reason="load"\} (\d+)/) ?? '0';
+    document.getElementById('mReason').textContent = `cache ${rc} · load ${rl}`;
+
+    // per-worker
+    const active = {}, blocks = {};
+    for (const m of t.matchAll(/minidynamo_worker_active_requests\{worker="([^"]+)"\} (\d+)/g)) active[m[1]]=+m[2];
+    for (const m of t.matchAll(/minidynamo_worker_cache_blocks\{worker="([^"]+)"\} (\d+)/g)) blocks[m[1]]=+m[2];
+    renderWorkers(active, blocks);
+  } catch(e) {}
+}
+
+let maxBlocks = 1;
+function renderWorkers(active, blocks){
+  const names = Object.keys(active);
+  maxBlocks = Math.max(maxBlocks, ...Object.values(blocks), 1);
+  const host = document.getElementById('workers');
+  if (host.children.length !== names.length) {
+    host.innerHTML = names.map(n=>`
+      <div class="worker" id="w-${n}">
+        <div class="name"><span class="pulse"></span>${n}</div>
+        <div class="row"><span>active requests</span><b class="wa">0</b></div>
+        <div class="loadbar"><i class="wl"></i></div>
+        <div class="row"><span>KV blocks cached</span><b class="wb">0</b></div>
+      </div>`).join('');
+  }
+  for (const n of names){
+    const el = document.getElementById('w-'+n); if(!el) continue;
+    el.querySelector('.wa').textContent = active[n];
+    el.querySelector('.wb').textContent = blocks[n] ?? 0;
+    el.querySelector('.wl').style.width = Math.min(100,(active[n]/3)*100)+'%';
+    el.classList.toggle('busy', active[n] > 0);
+  }
+}
+
+function flashWorker(name){
+  const el = document.getElementById('w-'+name); if(!el) return;
+  document.querySelectorAll('.worker').forEach(w=>w.classList.remove('active-route'));
+  el.classList.add('active-route');
+}
+
+async function send(messages, label){
+  const out = document.getElementById('out'); out.textContent='';
+  const dec = document.getElementById('decision');
+  dec.innerHTML = `<span class="hint">routing ${label}…</span>`;
+  let resp;
+  try {
+    resp = await fetch('/v1/chat/completions', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ messages, max_tokens:24, stream:true })
+    });
+  } catch(e){ dec.textContent='request failed: '+e; return; }
+
+  const worker = resp.headers.get('X-MD-Worker') || '?';
+  const reason = resp.headers.get('X-MD-Reason') || '?';
+  const overlap = resp.headers.get('X-MD-Overlap') || '0';
+  const total = resp.headers.get('X-MD-Blocks') || '0';
+  flashWorker(worker);
+  const cls = reason==='cache' ? 'hit' : 'miss';
+  dec.innerHTML = `${label} → <b>${worker}</b> · <span class="${cls}">${reason==='cache'?'CACHE HIT':'load balance'}</span> · reused ${overlap}/${total} prompt blocks`;
+  feed(`${label}  →  ${worker}  [${reason}, ${overlap}/${total} blocks]`);
+
+  const reader = resp.body.getReader(); const td = new TextDecoder(); let buf='';
+  while(true){
+    const {value,done} = await reader.read(); if(done) break;
+    buf += td.decode(value,{stream:true});
+    let i; while((i=buf.indexOf('\n'))>=0){
+      const line=buf.slice(0,i); buf=buf.slice(i+1);
+      if(!line.startsWith('data: ')) continue;
+      const p=line.slice(6).trim(); if(p==='[DONE]') continue;
+      try { const o=JSON.parse(p); const c=o.choices?.[0]?.delta?.content; if(c) out.textContent+=c; } catch(e){}
+    }
+  }
+}
+
+function sendThread(which){
+  if (which==='a'){
+    const q = TURNS_A[idxA % TURNS_A.length]; idxA++;
+    histA = histA.concat([{role:"user",content:q}]);
+    send(histA.slice(), `Thread α turn ${idxA}`);
+    histA = histA.concat([{role:"assistant",content:"ok, continuing the thread."}]);
+  } else {
+    const q = TURNS_B[idxB % TURNS_B.length]; idxB++;
+    histB = histB.concat([{role:"user",content:q}]);
+    send(histB.slice(), `Thread β turn ${idxB}`);
+    histB = histB.concat([{role:"assistant",content:"ok, continuing the thread."}]);
+  }
+}
+function resetThreads(){ idxA=0; idxB=0; histA=[{role:"system",content:SYS_A}]; histB=[{role:"system",content:SYS_B}]; feed('— threads reset —'); }
+function sendFree(){
+  const v = document.getElementById('freeInput').value.trim(); if(!v) return;
+  send([{role:"user",content:v}], 'One-off');
+}
+document.getElementById('freeInput').addEventListener('keydown',e=>{ if(e.key==='Enter') sendFree(); });
+
+// policy tag
+fetch('/metrics').then(()=>{}).catch(()=>{});
+document.getElementById('policyTag').textContent = 'KV-cache-aware';
+setInterval(fetchMetrics, 700); fetchMetrics();
+</script>
+</body>
+</html>

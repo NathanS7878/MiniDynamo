@@ -107,6 +107,11 @@ async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "ok": true }))
 }
 
+/// Live dashboard, served same-origin so the browser can call the API without CORS.
+async fn dashboard() -> axum::response::Html<&'static str> {
+    axum::response::Html(include_str!("dashboard.html"))
+}
+
 async fn metrics(State(pool): State<Arc<Pool>>) -> String {
     pool.metrics_text()
 }
@@ -159,11 +164,26 @@ async fn chat_completions(State(pool): State<Arc<Pool>>, Json(req): Json<ChatReq
         }
     };
 
-    if req.stream {
+    // Expose the routing decision to clients (the dashboard reads these).
+    let worker_name = pool.workers[decision.worker].name.clone();
+    let reason = match decision.reason {
+        router::RouteReason::Cache => "cache",
+        router::RouteReason::Load => "load",
+    };
+    let overlap = decision.overlap_blocks;
+    let total_blocks = hashes.len();
+
+    let mut response = if req.stream {
         stream_response(pool.clone(), resp, decision.worker, hashes, request_id, model).await
     } else {
         aggregate_response(pool.clone(), resp, decision.worker, hashes, request_id, model).await
-    }
+    };
+    let h = response.headers_mut();
+    h.insert("X-MD-Worker", worker_name.parse().unwrap());
+    h.insert("X-MD-Reason", reason.parse().unwrap());
+    h.insert("X-MD-Overlap", overlap.to_string().parse().unwrap());
+    h.insert("X-MD-Blocks", total_blocks.to_string().parse().unwrap());
+    response
 }
 
 /// Decrements a worker's active-request count when dropped (i.e. when the
@@ -314,6 +334,7 @@ async fn main() {
     let _ = pool.metrics.requests_total.load(Ordering::Relaxed); // touch metrics
 
     let app = Router::new()
+        .route("/", get(dashboard))
         .route("/health", get(health))
         .route("/metrics", get(metrics))
         .route("/v1/chat/completions", post(chat_completions))

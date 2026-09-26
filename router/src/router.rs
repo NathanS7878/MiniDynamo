@@ -97,6 +97,11 @@ pub struct Pool {
     /// so that under no cache overlap the policy degrades to round-robin rather
     /// than always piling onto worker 0.
     tie: AtomicUsize,
+    /// How many blocks of cache overlap one in-flight request is "worth" in the
+    /// KV-aware cost function `score = overlap - load_weight * active_load`.
+    /// 0 = pure cache affinity (can overload a hot worker); higher = more load
+    /// balancing. Tunable via MD_LOAD_WEIGHT.
+    load_weight: f64,
 }
 
 /// Longest contiguous run of leading blocks the cache holds.
@@ -134,6 +139,11 @@ impl Pool {
             .and_then(|v| v.parse().ok())
             .unwrap_or(DEFAULT_BLOCK_SIZE);
 
+        let load_weight = std::env::var("MD_LOAD_WEIGHT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1.0);
+
         Pool {
             workers,
             http: reqwest::Client::new(),
@@ -141,6 +151,7 @@ impl Pool {
             policy,
             metrics: Metrics::default(),
             tie: AtomicUsize::new(0),
+            load_weight,
         }
     }
 
@@ -156,16 +167,29 @@ impl Pool {
         match &self.policy {
             Policy::RoundRobin(ctr) => {
                 let idx = ctr.fetch_add(1, Ordering::Relaxed) % self.workers.len();
-                Decision { worker: idx, reason: RouteReason::Load, overlap_blocks: 0 }
+                // Round-robin ignores the cache when *choosing* a worker, but we
+                // still measure the reuse it happens to land on, so the hit-rate
+                // metric reflects real cache behavior rather than the policy's
+                // blind spot (otherwise it reads 0% purely by construction).
+                let overlap = {
+                    let cache = self.workers[idx].cache.lock().unwrap();
+                    contiguous_overlap(&cache, hashes)
+                };
+                let reason = if overlap > 0 { RouteReason::Cache } else { RouteReason::Load };
+                Decision { worker: idx, reason, overlap_blocks: overlap }
             }
             Policy::KvAware => {
                 let n = self.workers.len();
-                // Iterate starting from a rotating offset so that workers which
-                // are tied on (overlap, load) are chosen round-robin over time.
-                let start = self.tie.fetch_add(1, Ordering::Relaxed);
+                // Cost function: score = cache_overlap - load_weight * in_flight.
+                // Cache affinity pulls a request toward the worker holding its
+                // prefix; the load term pushes it away when that worker is busy,
+                // so a hot prefix can't overload one worker. Iterate from a
+                // rotating offset so exact ties spread round-robin.
+                let start = self.tie.load(Ordering::Relaxed);
                 let mut best_idx = start % n;
-                let mut best_overlap: i64 = -1;
-                let mut best_load = usize::MAX;
+                let mut best_score = f64::MIN;
+                let mut best_overlap = 0usize;
+                let mut chose_for_cache = false;
                 for k in 0..n {
                     let i = (start + k) % n;
                     let w = &self.workers[i];
@@ -174,19 +198,23 @@ impl Pool {
                         contiguous_overlap(&cache, hashes)
                     };
                     let load = w.active.load(Ordering::Relaxed);
-                    // Prefer more cache overlap; then lower load. Strict `>` keeps
-                    // the first candidate in rotated order on a full tie.
-                    if (overlap as i64) > best_overlap
-                        || ((overlap as i64) == best_overlap && load < best_load)
-                    {
-                        best_overlap = overlap as i64;
-                        best_load = load;
+                    let score = overlap as f64 - self.load_weight * load as f64;
+                    // Strict `>` keeps the first candidate in rotated order on a tie.
+                    if score > best_score {
+                        best_score = score;
                         best_idx = i;
+                        best_overlap = overlap;
+                        // "Cache" only if this worker's own cache is why we're here.
+                        chose_for_cache = overlap > 0;
                     }
                 }
-                let overlap = best_overlap.max(0) as usize;
-                let reason = if overlap > 0 { RouteReason::Cache } else { RouteReason::Load };
-                Decision { worker: best_idx, reason, overlap_blocks: overlap }
+                let reason = if chose_for_cache { RouteReason::Cache } else { RouteReason::Load };
+                // Advance the round-robin cursor only when we fell back to load
+                // balancing, so consecutive no-overlap requests spread evenly.
+                if matches!(reason, RouteReason::Load) {
+                    self.tie.fetch_add(1, Ordering::Relaxed);
+                }
+                Decision { worker: best_idx, reason, overlap_blocks: best_overlap }
             }
         }
     }
@@ -279,6 +307,13 @@ impl Pool {
                 "minidynamo_worker_active_requests{{worker=\"{}\"}} {}\n",
                 w.name,
                 w.active.load(Ordering::Relaxed)
+            ));
+        }
+        for w in &self.workers {
+            out.push_str(&format!(
+                "minidynamo_worker_cache_blocks{{worker=\"{}\"}} {}\n",
+                w.name,
+                w.cache.lock().unwrap().len()
             ));
         }
         out

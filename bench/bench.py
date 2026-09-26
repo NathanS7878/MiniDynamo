@@ -171,9 +171,14 @@ def run_policy(policy: str, workload: list[list[dict]], workers: int, router_por
 
         metrics = requests.get(f"http://127.0.0.1:{router_port}/metrics", timeout=5).text
         hit_rate = 0.0
+        hit_blocks = miss_blocks = 0
         for ln in metrics.splitlines():
             if ln.startswith("minidynamo_cache_hit_rate"):
                 hit_rate = float(ln.split()[-1])
+            elif ln.startswith("minidynamo_cache_hit_blocks_total"):
+                hit_blocks = int(ln.split()[-1])
+            elif ln.startswith("minidynamo_cache_miss_blocks_total"):
+                miss_blocks = int(ln.split()[-1])
 
         return {
             "policy": policy,
@@ -182,6 +187,8 @@ def run_policy(policy: str, workload: list[list[dict]], workers: int, router_por
             "ttft_p90_ms": pctl(ttfts, 90) * 1000,
             "ttft_mean_ms": statistics.mean(ttfts) * 1000 if ttfts else 0.0,
             "cache_hit_rate": hit_rate,
+            "cache_hit_blocks": hit_blocks,
+            "cache_total_blocks": hit_blocks + miss_blocks,
             "wall_sec": wall,
             "throughput_rps": len(ttfts) / wall if wall else 0.0,
             "_ttfts_ms": [x * 1000 for x in ttfts],
@@ -197,6 +204,8 @@ def main() -> None:
     ap.add_argument("--conversations", type=int, default=24)
     ap.add_argument("--turns", type=int, default=4)
     ap.add_argument("--router-port", type=int, default=8100)
+    ap.add_argument("--repeat", type=int, default=1,
+                    help="repeat each policy N times and pool the samples (cuts run-to-run noise)")
     args = ap.parse_args()
 
     if not ROUTER_BIN.exists():
@@ -209,34 +218,62 @@ def main() -> None:
 
     results = []
     for policy in ("round_robin", "kv_aware"):
-        print(f"running policy = {policy} ...")
-        res = run_policy(policy, workload, args.workers, args.router_port)
-        results.append(res)
-        print(f"  p50 TTFT = {res['ttft_p50_ms']:.1f} ms | p90 = {res['ttft_p90_ms']:.1f} ms | "
-              f"cache hit = {res['cache_hit_rate']*100:.1f}% | throughput = {res['throughput_rps']:.1f} rps\n")
+        runs = []
+        for r in range(args.repeat):
+            print(f"running policy = {policy} (run {r + 1}/{args.repeat}) ...")
+            runs.append(run_policy(policy, workload, args.workers, args.router_port))
+        # Pool TTFT samples across repeats for stable percentiles; sum blocks.
+        pooled = [t for run in runs for t in run["_ttfts_ms"]]
+        hit_blocks = sum(run["cache_hit_blocks"] for run in runs)
+        total_blocks = sum(run["cache_total_blocks"] for run in runs)
+        agg = {
+            "policy": policy,
+            "runs": len(runs),
+            "requests": sum(run["requests"] for run in runs),
+            "ttft_p50_ms": pctl(pooled, 50),
+            "ttft_p90_ms": pctl(pooled, 90),
+            "ttft_mean_ms": statistics.mean(pooled) if pooled else 0.0,
+            "cache_hit_blocks": hit_blocks,
+            "cache_total_blocks": total_blocks,
+            "cache_hit_rate": hit_blocks / total_blocks if total_blocks else 0.0,
+            "throughput_rps": statistics.mean(run["throughput_rps"] for run in runs),
+            "wall_sec": statistics.mean(run["wall_sec"] for run in runs),
+        }
+        results.append(agg)
+        print(f"  [{policy}] pooled over {len(runs)} run(s): p50 TTFT = {agg['ttft_p50_ms']:.1f} ms | "
+              f"p90 = {agg['ttft_p90_ms']:.1f} ms | cache hit = {agg['cache_hit_rate']*100:.1f}% | "
+              f"throughput = {agg['throughput_rps']:.1f} rps\n")
 
     # Persist + summarize
     with open(RESULTS / "results.json", "w") as f:
         json.dump([{k: v for k, v in r.items() if not k.startswith("_")} for r in results], f, indent=2)
 
     rr, kv = results[0], results[1]
-    def improvement(a, b):  # percent reduction from a -> b
+    def reduction(a, b):   # percent DROP from a -> b (for latency/wall)
         return (a - b) / a * 100 if a else 0.0
+    def increase(a, b):    # percent RISE from a -> b (for throughput)
+        return (b - a) / a * 100 if a else 0.0
     summary = (
         "| metric | round_robin | kv_aware | improvement |\n"
         "|---|---|---|---|\n"
-        f"| TTFT p50 (ms) | {rr['ttft_p50_ms']:.1f} | {kv['ttft_p50_ms']:.1f} | {improvement(rr['ttft_p50_ms'], kv['ttft_p50_ms']):.0f}% lower |\n"
-        f"| TTFT p90 (ms) | {rr['ttft_p90_ms']:.1f} | {kv['ttft_p90_ms']:.1f} | {improvement(rr['ttft_p90_ms'], kv['ttft_p90_ms']):.0f}% lower |\n"
-        f"| TTFT mean (ms) | {rr['ttft_mean_ms']:.1f} | {kv['ttft_mean_ms']:.1f} | {improvement(rr['ttft_mean_ms'], kv['ttft_mean_ms']):.0f}% lower |\n"
-        f"| cache hit rate | {rr['cache_hit_rate']*100:.1f}% | {kv['cache_hit_rate']*100:.1f}% | +{(kv['cache_hit_rate']-rr['cache_hit_rate'])*100:.0f} pts |\n"
-        f"| throughput (rps) | {rr['throughput_rps']:.1f} | {kv['throughput_rps']:.1f} | {improvement(rr['wall_sec'], kv['wall_sec']):.0f}% faster |\n"
+        f"| TTFT p50 (ms) | {rr['ttft_p50_ms']:.1f} | {kv['ttft_p50_ms']:.1f} | {reduction(rr['ttft_p50_ms'], kv['ttft_p50_ms']):.0f}% lower |\n"
+        f"| TTFT p90 (ms) | {rr['ttft_p90_ms']:.1f} | {kv['ttft_p90_ms']:.1f} | {reduction(rr['ttft_p90_ms'], kv['ttft_p90_ms']):.0f}% lower |\n"
+        f"| TTFT mean (ms) | {rr['ttft_mean_ms']:.1f} | {kv['ttft_mean_ms']:.1f} | {reduction(rr['ttft_mean_ms'], kv['ttft_mean_ms']):.0f}% lower |\n"
+        f"| cache hit rate (blocks) | {rr['cache_hit_rate']*100:.1f}% ({rr['cache_hit_blocks']}/{rr['cache_total_blocks']}) | {kv['cache_hit_rate']*100:.1f}% ({kv['cache_hit_blocks']}/{kv['cache_total_blocks']}) | +{(kv['cache_hit_rate']-rr['cache_hit_rate'])*100:.0f} pts |\n"
+        f"| throughput (rps) | {rr['throughput_rps']:.1f} | {kv['throughput_rps']:.1f} | {increase(rr['throughput_rps'], kv['throughput_rps']):.0f}% higher |\n"
+        f"| wall time (s) | {rr['wall_sec']:.2f} | {kv['wall_sec']:.2f} | {reduction(rr['wall_sec'], kv['wall_sec']):.0f}% faster |\n"
     )
     print(summary)
+    load_weight = os.environ.get("MD_LOAD_WEIGHT", "1.0")
     with open(RESULTS / "summary.md", "w") as f:
         f.write("# MiniDynamo benchmark results\n\n")
         f.write(f"Workload: {args.conversations} conversations x {args.turns} turns "
-                f"({total} requests), {args.workers} workers.\n\n")
+                f"({total} requests), {args.workers} workers, "
+                f"{args.repeat} repeat(s) pooled. KV-aware load_weight = {load_weight}.\n\n")
         f.write(summary)
+        f.write("\nCache hit rate is **block-weighted**: numerator = KV blocks reused, "
+                "denominator = total prompt blocks across all requests (not a per-request average). "
+                "TTFT percentiles are pooled across repeats to reduce run-to-run noise.\n")
 
     try:
         make_chart(results)
